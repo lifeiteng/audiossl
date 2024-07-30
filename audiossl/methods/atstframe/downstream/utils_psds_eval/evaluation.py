@@ -12,10 +12,11 @@ from concurrent.futures import ProcessPoolExecutor
 from queue import Queue
 
 
-g_manager = multiprocessing.Manager()
-
-
 g_parallel = False
+
+if g_parallel:
+    g_manager = multiprocessing.Manager()
+
 
 def get_event_list_current_file(df, fname):
     """

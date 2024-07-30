@@ -83,12 +83,103 @@ class InferenceAudioSetStrong(nn.Module):
         output = self.head(output)
         return output
 
+import os
+def get_filename(path):
+    path = os.path.realpath(path)
+    na_ext = path.split('/')[-1]
+    na = os.path.splitext(na_ext)[0]
+    return na
+
 
 if __name__ == "__main__":
     import sys
-    ckpt_path  = sys.argv[1]
+    import librosa
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from audiossl.datasets.as_strong_utils.as_strong_dict import get_lab_dict
+
+    labelmap, labels = {}, []
+    with open("./mid_to_display_name.tsv") as f:
+        for line in f:
+            key, name = line.strip().split('\t')
+            assert key not in labelmap
+            labelmap[key] = name
+
+    Labels = [line.strip() for line in open("./common_labels.txt").readlines()]
+    for l in Labels:
+        labels.append(labelmap[l])
+
+    # classes_labels = get_lab_dict("./common_labels.txt")
+    # for l in list(classes_labels.keys()):
+    #     labels.append(labelmap[l])
+
+    print(f"Labels {len(labels)}")
+
+    ckpt_path, audio_path  = sys.argv[1], sys.argv[2]
+    (waveform, _) = librosa.core.load(audio_path, sr=16000, mono=True)
+    waveform = waveform.reshape([1, -1])
+    print(waveform.shape)
     m = InferenceAudioSetStrong(ckpt_path)
-    wav = torch.randn(1,160000)
-    output = m.predict(wav)
+    m.eval()
+    with torch.no_grad():
+        framewise_output = m.predict(torch.from_numpy(waveform))
+    framewise_output = framewise_output[0].detach().cpu().numpy().transpose(1, 0)
+    print(f"FRMAE {framewise_output.shape}")
+
+    sorted_indexes = np.argsort(np.max(framewise_output, axis=0))[::-1]
+
+    frames_per_second = 16000 // 160
 
 
+    top_k = 10  # Show top results
+    sorted_indexes_max = np.argsort(np.max(framewise_output, axis=0))[::-1][0 : top_k]
+    sorted_indexes_sum = np.argsort(np.sum(framewise_output, axis=0))[::-1][0 : top_k]
+
+    # sorted_indexes = np.concatenate([sorted_indexes_max, sorted_indexes_sum])
+    # sorted_indexes = list(set(sorted_indexes.tolist()))
+
+    sorted_indexes = sorted_indexes_max.tolist()
+    for idx in sorted_indexes_sum.tolist():
+        if idx not in sorted_indexes:
+            sorted_indexes.append(idx)
+
+    top_result_mat = framewise_output[:, sorted_indexes]
+    """(time_steps, top_k)"""
+    # prob_path = os.path.join('results', '{}_probs.txt'.format(get_filename(audio_path)))
+    # np.savetxt(prob_path, top_result_mat.T, fmt='%.3e')
+
+
+    print(f"Sorted Indexes: {sorted_indexes[0 : top_k]}")
+    print(f"Sorted  Labels: {[Labels[k] for k in sorted_indexes[0 : top_k]]}")
+    print(f"Sorted  labels: {[labels[k] for k in sorted_indexes[0 : top_k]]}")
+
+
+    # Plot result    
+    stft = librosa.core.stft(y=waveform[0], n_fft=1024, hop_length=160, window='hann', center=True)
+    frames_num = stft.shape[-1]
+    print(f"STFT {stft.shape}")
+
+    fig, axs = plt.subplots(2, 1, sharex=True, figsize=(16, 4))
+    vv = axs[0].matshow(np.log(np.abs(stft)), origin='lower', aspect='auto', cmap='jet')
+    axs[0].set_ylabel('Frequency bins')
+    axs[0].set_title('Log spectrogram')
+    plt.colorbar(vv, ax=axs[0])
+    top_result_mat = top_result_mat.repeat(frames_num // top_result_mat.shape[0], axis=0)
+    print(f"top_result_mat {top_result_mat.shape}")
+    vv = axs[1].matshow(top_result_mat.T, origin='upper', aspect='auto', cmap='jet', vmin=0, vmax=1)
+
+    # plot line at top_k
+    axs[1].axhline(y=top_k-0.5, xmin=0.0, xmax=1.0, color='r')
+    axs[1].xaxis.set_ticks(np.arange(0, frames_num, frames_per_second))
+    axs[1].xaxis.set_ticklabels(np.arange(0, frames_num / frames_per_second))
+    axs[1].yaxis.set_ticks(np.arange(0, len(sorted_indexes)))
+    axs[1].yaxis.set_ticklabels(np.array(labels)[sorted_indexes])
+    axs[1].yaxis.grid(color='k', linestyle='solid', linewidth=0.3, alpha=0.3)
+    axs[1].set_xlabel('Seconds')
+    axs[1].xaxis.set_ticks_position('bottom')
+    plt.colorbar(vv, ax=axs[1])
+
+    plt.tight_layout()
+    fig_path = os.path.join('results', '{}.png'.format(get_filename(audio_path)))
+    plt.savefig(fig_path)
+    print('Save sound event detection visualization to {}'.format(fig_path))

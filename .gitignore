@@ -6,3 +6,10 @@ tmp*
 nohup.out
 ckpts
 logs
+110126_2_1.pkf
+110126_2_1.wav
+atst_ft_StrongAS_eps28.ckpt
+.DS_Store
+common_labels_MyOwn.txt
+results/
+stage_2_w_external.ckpt
