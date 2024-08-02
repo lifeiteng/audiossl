@@ -107,6 +107,7 @@ def parse_audioset_strong_merged(merged_file, labels):
         names = set(pf[f"dimension{x}"].dropna().values.tolist())
         for name in names:
             mids = pf[pf[f"dimension{x}"] == name]["mid"].values.tolist()
+            # assert name not in merged2mids
             merged2mids[name].extend(mids)
     
     logging.info(f"Number of merged labels: {len(merged2mids)}")
@@ -127,12 +128,44 @@ def parse_audioset_strong_merged(merged_file, labels):
     return transform, keys
 
 
+import argparse
+def str2bool(v):
+    """Used in argparse.ArgumentParser.add_argument to indicate
+    that a type is a bool type and user can enter
+
+        - yes, true, t, y, 1, to represent True
+        - no, false, f, n, 0, to represent False
+
+    See https://stackoverflow.com/questions/15008758/parsing-boolean-values-with-argparse  # noqa
+    """
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ("yes", "true", "t", "y", "1"):
+        return True
+    elif v.lower() in ("no", "false", "f", "n", "0"):
+        return False
+    else:
+        raise argparse.ArgumentTypeError("Boolean value expected.")
+
+
 if __name__ == "__main__":
     import sys
     import librosa
     import numpy as np
     import matplotlib.pyplot as plt
+    from pathlib import Path
     from audiossl.datasets.as_strong_utils.as_strong_dict import get_lab_dict
+    from pyannote.audio.utils.signal import binarize_ndarray
+
+    parser = argparse.ArgumentParser(description="Eval SED")
+    # parser.add_argument("--merge", type=str2bool, default=False, help="Merge labels")
+    parser.add_argument("--merged_file", type=str, default="", help="Merged labels file")
+    parser.add_argument("--model_file", type=str, default="atst_ft_StrongAS_eps28.ckpt", help="model checkpoint file")
+    parser.add_argument("--binarize", type=str2bool, default=False, help="Plot binarized flag")
+    parser.add_argument("--suffix", type=str, default="", help="output file suffix")
+    parser.add_argument("--audio_paths", nargs='+', help="audio paths")
+    
+    args = parser.parse_args()
 
     labelmap, labels = {}, []
     with open("./mid_to_display_name.tsv") as f:
@@ -150,107 +183,133 @@ if __name__ == "__main__":
     #     labels.append(labelmap[l])
 
     print(f"Labels {len(labels)}")
-    
-    merged_file = "/Users/feiteng/StarQuestAI/QuestarLLM/FAlignerBenchmark/audioset/strong_456_class_labels_indices_merged.csv"
-    transform, merged_labels = parse_audioset_strong_merged(merged_file, Labels)
 
-    ckpt_path, audio_path  = sys.argv[1], sys.argv[2]
-    (waveform, _) = librosa.core.load(audio_path, sr=16000, mono=True)
-    waveform = waveform.reshape([1, -1])
-    print(waveform.shape)
+    if args.merged_file:
+        # merged_file = "/Users/feiteng/StarQuestAI/QuestarLLM/FAlignerBenchmark/audioset/strong_456_class_labels_indices_merged.csv"
+        transform, merged_labels = parse_audioset_strong_merged(args.merged_file, Labels)
+
+    ckpt_path, audio_paths  = args.model_file, args.audio_paths
+
     m = InferenceAudioSetStrong(ckpt_path)
     m.eval()
-    with torch.no_grad():
-        framewise_output = m.predict(torch.from_numpy(waveform))
-    framewise_output = framewise_output[0].detach().cpu().numpy().transpose(1, 0)
-    logging.info(f"FRMAE {framewise_output.shape}")
 
-    sorted_indexes = np.argsort(np.max(framewise_output, axis=0))[::-1]
+    for audio_path in audio_paths:
+        base_file = Path(audio_path).parent / Path(audio_path).stem
+        
+        (waveform, _) = librosa.core.load(audio_path, sr=16000, mono=True)
+        waveform = waveform.reshape([1, -1])
+        # print(waveform.shape)
 
-    frames_per_second = 16000 // 160
+        with torch.no_grad():
+            framewise_output = m.predict(torch.from_numpy(waveform))
+        framewise_output = framewise_output[0].detach().cpu().numpy().transpose(1, 0)
+        logging.info(f"FRMAE {framewise_output.shape}")
 
+        sorted_indexes = np.argsort(np.max(framewise_output, axis=0))[::-1]
 
-    top_k = 10  # Show top results
-    sorted_indexes_max = np.argsort(np.max(framewise_output, axis=0))[::-1][0 : top_k]
-    sorted_indexes_sum = np.argsort(np.sum(framewise_output, axis=0))[::-1][0 : top_k]
-
-    # sorted_indexes = np.concatenate([sorted_indexes_max, sorted_indexes_sum])
-    # sorted_indexes = list(set(sorted_indexes.tolist()))
-
-    sorted_indexes = sorted_indexes_max.tolist()
-    for idx in sorted_indexes_sum.tolist():
-        if idx not in sorted_indexes:
-            sorted_indexes.append(idx)
+        frames_per_second = 16000 // 160
 
 
-    """(time_steps, top_k)"""
-    # prob_path = os.path.join('results', '{}_probs.txt'.format(get_filename(audio_path)))
-    # np.savetxt(prob_path, top_result_mat.T, fmt='%.3e')
+        top_k = 10  # Show top results
+        sorted_indexes_max = np.argsort(np.max(framewise_output, axis=0))[::-1][0 : top_k]
+        sorted_indexes_sum = np.argsort(np.sum(framewise_output, axis=0))[::-1][0 : top_k]
 
-    logging.info(f"Sorted Indexes: {sorted_indexes[0 : top_k]}")
-    logging.info(f"Sorted  Labels: {[Labels[k] for k in sorted_indexes[0 : top_k]]}")
-    logging.info(f"Sorted  labels: {[labels[k] for k in sorted_indexes[0 : top_k]]}")
+        # sorted_indexes = np.concatenate([sorted_indexes_max, sorted_indexes_sum])
+        # sorted_indexes = list(set(sorted_indexes.tolist()))
 
-
-    # Plot result    
-    # Figure 1
-    stft = librosa.core.stft(y=waveform[0], n_fft=1024, hop_length=160, window='hann', center=True)
-    frames_num = stft.shape[-1]
-    logging.info(f"STFT {stft.shape}")
-
-    # 扩展开 frames
-    framewise_output = framewise_output.repeat(frames_num // framewise_output.shape[0], axis=0)
-
-    top_result_mat = framewise_output[:, sorted_indexes]
-
-    fig, axs = plt.subplots(3, 1, sharex=True, figsize=(16, 8), gridspec_kw={'height_ratios': [1, 1, 1.1]})
-    vv = axs[0].matshow(np.log(np.abs(stft)), origin='lower', aspect='auto', cmap='jet')
-    axs[0].set_ylabel('Frequency bins')
-    axs[0].set_title('Log spectrogram')
-    plt.colorbar(vv, ax=axs[0])
-
-    # Figure 2
-    logging.info(f"   raw {top_result_mat.shape} v[{top_result_mat.min():.2f}, {top_result_mat.max():.2f}]")
-    vv = axs[1].matshow(top_result_mat.T, origin='upper', aspect='auto', cmap='jet', vmin=0, vmax=1)
-    # plot line at top_k
-    axs[1].axhline(y=top_k-0.5, xmin=0.0, xmax=1.0, color='r')
-    axs[1].xaxis.set_ticks(np.arange(0, frames_num, frames_per_second))
-    # axs[1].xaxis.set_ticklabels(np.arange(0, frames_num / frames_per_second))
-    axs[1].yaxis.set_ticks(np.arange(0, len(sorted_indexes)))
-    axs[1].yaxis.set_ticklabels(np.array(labels)[sorted_indexes])
-    # axs[1].yaxis.grid(color='k', linestyle='solid', linewidth=0.3, alpha=0.3)
-    # axs[1].set_xlabel('Seconds')
-    # axs[1].xaxis.set_ticks_position('bottom')
-    plt.colorbar(vv, ax=axs[1])
-
-    # Figure 3
-    framewise_output = np.dot(framewise_output, transform)
-
-    sorted_indexes_max = np.argsort(np.max(framewise_output, axis=0))[::-1][0 : top_k]
-    sorted_indexes_sum = np.argsort(np.sum(framewise_output, axis=0))[::-1][0 : top_k]
-    sorted_indexes = sorted_indexes_max.tolist()
-    for idx in sorted_indexes_sum.tolist():
-        if idx not in sorted_indexes:
-            sorted_indexes.append(idx)
-    top_result_mat = framewise_output[:, sorted_indexes]
-
-    logging.info(f"merged {top_result_mat.shape} v[{top_result_mat.min():.2f}, {top_result_mat.max():.2f}]")
-
-    vv = axs[2].matshow(top_result_mat.T, origin='upper', aspect='auto', cmap='jet', vmin=0, vmax=1)
-    # plot line at top_k
-    axs[2].axhline(y=top_k-0.5, xmin=0.0, xmax=1.0, color='r')
-    axs[2].xaxis.set_ticks(np.arange(0, frames_num, frames_per_second))
-    # axs[2].xaxis.set_ticklabels(np.arange(0, frames_num / frames_per_second))
-    axs[2].yaxis.set_ticks(np.arange(0, len(sorted_indexes)))
-    axs[2].yaxis.set_ticklabels(np.array(merged_labels)[sorted_indexes])
-    # axs[2].yaxis.grid(color='k', linestyle='solid', linewidth=0.3, alpha=0.3)
-    # axs[2].set_xlabel('Seconds')
-    # axs[2].xaxis.set_ticks_position('bottom')
-    plt.colorbar(vv, ax=axs[2])
+        sorted_indexes = sorted_indexes_max.tolist()
+        for idx in sorted_indexes_sum.tolist():
+            if idx not in sorted_indexes:
+                sorted_indexes.append(idx)
 
 
+        """(time_steps, top_k)"""
+        # prob_path = f'{base_file}{args.suffix}_probs.txt'
+        # np.savetxt(prob_path, top_result_mat.T, fmt='%.3e')
 
-    plt.tight_layout()
-    fig_path = os.path.join('results', '{}.png'.format(get_filename(audio_path)))
-    plt.savefig(fig_path)
-    logging.info('Save sound event detection visualization to {}'.format(fig_path))
+        logging.info(f"Sorted Indexes: {sorted_indexes[0 : top_k]}")
+        logging.info(f"Sorted  Labels: {[Labels[k] for k in sorted_indexes[0 : top_k]]}")
+        logging.info(f"Sorted  labels: {[labels[k] for k in sorted_indexes[0 : top_k]]}")
+
+
+        # Plot result
+        # Figure 1
+        stft = librosa.core.stft(y=waveform[0], n_fft=1024, hop_length=160, window='hann', center=True)
+        frames_num = stft.shape[-1]
+        logging.info(f"STFT {stft.shape}")
+
+        # 扩展开 frames
+        framewise_output = framewise_output.repeat(frames_num // framewise_output.shape[0], axis=0)
+
+        top_result_mat = framewise_output[:, sorted_indexes]
+
+        if args.merged_file:
+            fig, axs = plt.subplots(3, 1, sharex=True, figsize=(16, 8), gridspec_kw={'height_ratios': [1, 1, 1.1]})
+        elif args.binarize:
+            fig, axs = plt.subplots(3, 1, sharex=True, figsize=(16, 8), gridspec_kw={'height_ratios': [1, 1, 1]})
+        else:
+            fig, axs = plt.subplots(2, 1, sharex=True, figsize=(12, 6))
+
+        vv = axs[0].matshow(np.log(np.abs(stft)), origin='lower', aspect='auto', cmap='jet')
+        axs[0].set_ylabel('Frequency bins')
+        axs[0].set_title('Log spectrogram')
+        plt.colorbar(vv, ax=axs[0])
+
+        # Figure 2
+        logging.info(f"   raw {top_result_mat.shape} v[{top_result_mat.min():.2f}, {top_result_mat.max():.2f}]")
+        vv = axs[1].matshow(top_result_mat.T, origin='upper', aspect='auto', cmap='jet', vmin=0, vmax=1)
+        # plot line at top_k
+        axs[1].axhline(y=top_k-0.5, xmin=0.0, xmax=1.0, color='r')
+        axs[1].xaxis.set_ticks(np.arange(0, frames_num, frames_per_second))
+        # axs[1].xaxis.set_ticklabels(np.arange(0, frames_num / frames_per_second))
+        axs[1].yaxis.set_ticks(np.arange(0, len(sorted_indexes)))
+        axs[1].yaxis.set_ticklabels(np.array(labels)[sorted_indexes])
+        # axs[1].yaxis.grid(color='k', linestyle='solid', linewidth=0.3, alpha=0.3)
+        # axs[1].set_xlabel('Seconds')
+        # axs[1].xaxis.set_ticks_position('bottom')
+        plt.colorbar(vv, ax=axs[1])
+
+        if args.binarize:
+            # 移动平均
+            from torch.nn import functional as F
+            kernel_size = 11
+            probs = F.avg_pool1d(torch.tensor(top_result_mat.T).unsqueeze(0), kernel_size=kernel_size, stride=1, padding=kernel_size//2).squeeze(0).numpy()
+
+            binarized = binarize_ndarray(probs, onset=0.1, offset=0.1)
+            vv = axs[2].matshow(binarized.astype(np.float32) * 0.5, origin='upper', aspect='auto', cmap='jet', vmin=0, vmax=1)
+            axs[2].axhline(y=top_k-0.5, xmin=0.0, xmax=1.0, color='r')
+            axs[2].xaxis.set_ticks(np.arange(0, frames_num, frames_per_second))
+            axs[2].yaxis.set_ticks(np.arange(0, len(sorted_indexes)))
+            axs[2].yaxis.set_ticklabels(np.array(labels)[sorted_indexes])
+            plt.colorbar(vv, ax=axs[2])
+
+        if args.merged_file:
+            # Figure 3
+            framewise_output = np.dot(framewise_output, transform)
+
+            sorted_indexes_max = np.argsort(np.max(framewise_output, axis=0))[::-1][0 : top_k]
+            sorted_indexes_sum = np.argsort(np.sum(framewise_output, axis=0))[::-1][0 : top_k]
+            sorted_indexes = sorted_indexes_max.tolist()
+            for idx in sorted_indexes_sum.tolist():
+                if idx not in sorted_indexes:
+                    sorted_indexes.append(idx)
+            top_result_mat = framewise_output[:, sorted_indexes]
+
+            logging.info(f"merged {top_result_mat.shape} v[{top_result_mat.min():.2f}, {top_result_mat.max():.2f}]")
+
+            vv = axs[2].matshow(top_result_mat.T, origin='upper', aspect='auto', cmap='jet', vmin=0, vmax=1)
+            # plot line at top_k
+            axs[2].axhline(y=top_k-0.5, xmin=0.0, xmax=1.0, color='r')
+            axs[2].xaxis.set_ticks(np.arange(0, frames_num, frames_per_second))
+            # axs[2].xaxis.set_ticklabels(np.arange(0, frames_num / frames_per_second))
+            axs[2].yaxis.set_ticks(np.arange(0, len(sorted_indexes)))
+            axs[2].yaxis.set_ticklabels(np.array(merged_labels)[sorted_indexes])
+            # axs[2].yaxis.grid(color='k', linestyle='solid', linewidth=0.3, alpha=0.3)
+            # axs[2].set_xlabel('Seconds')
+            # axs[2].xaxis.set_ticks_position('bottom')
+            plt.colorbar(vv, ax=axs[2])
+
+        plt.tight_layout()
+        fig_path = f'{base_file}{args.suffix}.png'
+        plt.savefig(fig_path)
+        logging.info('Save sound event detection visualization to {}'.format(fig_path))
