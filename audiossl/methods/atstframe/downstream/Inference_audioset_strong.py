@@ -98,20 +98,25 @@ import logging
 formatter = "%(asctime)s %(levelname)s [%(filename)s:%(lineno)d] %(message)s"  # noqa
 logging.basicConfig(format=formatter, level=logging.INFO)
 
-def parse_audioset_strong_merged(merged_file, labels):
+def parse_audioset_strong_merged(merged_file, labels, labelmap):
     merged2mids = defaultdict(lambda: [])
 
     pf = pd.read_csv(merged_file)
     # index,mid,display_name,remarks,annotation_count,node_level,demension1,dimension2,dimension3,dimension4,dimension5,dimension6
+    used = set()
     for x in range(1, 7):
+        if f"dimension{x}" not in pf.columns:
+            break
         names = set(pf[f"dimension{x}"].dropna().values.tolist())
         for name in names:
             mids = pf[pf[f"dimension{x}"] == name]["mid"].values.tolist()
-            # assert name not in merged2mids
+            assert name not in merged2mids
             merged2mids[name].extend(mids)
-    
-    logging.info(f"Number of merged labels: {len(merged2mids)}")
-    transform = np.zeros((len(labels), len(merged2mids)), dtype=np.float32)
+            used.update(set(mids))
+
+    not_used = set(labels) - used
+    logging.info(f"Number of merged labels: {len(merged2mids)} not used: {len(not_used)}")
+    transform = np.zeros((len(labels), len(merged2mids) + len(not_used)), dtype=np.float32)
     keys = sorted(list(merged2mids.keys()))
     
     num_active = 0
@@ -124,6 +129,12 @@ def parse_audioset_strong_merged(merged_file, labels):
                 num_active += 1
             except:
                 pass
+    not_used = sorted(list(not_used))
+    for k, mid in enumerate(not_used):
+        idx = labels.index(mid)
+        transform[idx, len(merged2mids) + k] = 1.0
+        num_active += 1
+    keys += [f">>{labelmap[mid]}" for mid in not_used]
     assert num_active > 100
     return transform, keys
 
@@ -186,7 +197,7 @@ if __name__ == "__main__":
 
     if args.merged_file:
         # merged_file = "/Users/feiteng/StarQuestAI/QuestarLLM/FAlignerBenchmark/audioset/strong_456_class_labels_indices_merged.csv"
-        transform, merged_labels = parse_audioset_strong_merged(args.merged_file, Labels)
+        transform, merged_labels = parse_audioset_strong_merged(args.merged_file, Labels, labelmap)
 
     ckpt_path, audio_paths  = args.model_file, args.audio_paths
 
