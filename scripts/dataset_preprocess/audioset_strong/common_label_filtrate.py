@@ -4,11 +4,11 @@ import numpy as np
 from argparse import ArgumentParser
 
 parser = ArgumentParser("Data Preprocess")
-parser.add_argument("--root_path", type=str, required=True)
+parser.add_argument("--meta_path", type=str, required=True)
 args = parser.parse_args()
 
-root_path = args.root_path
-os.chdir(root_path) 
+meta_path = args.meta_path
+os.chdir(meta_path) 
 
 train_meta = pd.read_csv("./train/train.tsv",sep="\t")
 eval_meta = pd.read_csv("./eval/eval.tsv",sep="\t")

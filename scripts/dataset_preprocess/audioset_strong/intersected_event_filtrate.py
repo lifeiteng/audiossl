@@ -9,11 +9,11 @@ from tqdm import tqdm
 from argparse import ArgumentParser
 
 parser = ArgumentParser("Data Preprocess")
-parser.add_argument("--root_path", type=str, required=True)
+parser.add_argument("--meta_path", type=str, required=True)
 args = parser.parse_args()
 
-root_path = args.root_path
-os.chdir(root_path) 
+meta_path = args.meta_path
+os.chdir(meta_path) 
 
 def process_onset_offset(onset, offset):
     onset_list, offset_list = [], []
@@ -48,13 +48,14 @@ def rm_intersec(df):
             event_onsets = onset[event_mask]
             event_offsets = offset[event_mask]
             event_onsets, event_offsets = process_onset_offset(event_onsets, event_offsets)
-            return_df = return_df.append(pd.DataFrame({"filename": [file] * len(event_onsets), "onset": event_onsets, "offset": event_offsets, "event_label": [event] * len(event_onsets)}))
+            return_df = return_df._append(pd.DataFrame({"filename": [file] * len(event_onsets), "onset": event_onsets, "offset": event_offsets, "event_label": [event] * len(event_onsets)}))
     return return_df
 
-train_df = pd.read_csv("./train/train_common.tsv", delimiter="\t")
-eval_df = pd.read_csv("./eval/eval_common.tsv", delimiter="\t")
 
-train_new = rm_intersec(train_df)
-train_new.to_csv("./train/train_rm_intersect.tsv", index=False, sep="\t")
+eval_df = pd.read_csv("./eval/eval_common.tsv", delimiter="\t")
 eval_new = rm_intersec(eval_df)
 eval_new.to_csv("./eval/eval_rm_intersect.tsv", index=False, sep="\t")
+
+train_df = pd.read_csv("./train/train_common.tsv", delimiter="\t")
+train_new = rm_intersec(train_df)
+train_new.to_csv("./train/train_rm_intersect.tsv", index=False, sep="\t")
