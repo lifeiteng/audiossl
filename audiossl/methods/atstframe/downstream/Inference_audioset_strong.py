@@ -116,7 +116,7 @@ class InferenceAudioSetStrong(nn.Module):
             assert len(wav.shape) == 3
 
         mel = self.transform(wav)
-        chunk_len = 1001  #10 secnods, consistent with the length of positional embedding
+        chunk_len = 1000  #10 secnods, consistent with the length of positional embedding
         output = []
 
         total_len = mel.shape[-1]
@@ -134,6 +134,7 @@ class InferenceAudioSetStrong(nn.Module):
                 output_chunk = self.encoder.get_intermediate_layers(mel_chunk, len_chunk, n=1, scene=False)
 
                 output.append(output_chunk)
+
         output = torch.cat(output, dim=1)
         output = self.head(output)
         return output
@@ -154,7 +155,7 @@ class InferenceAudioSetStrong(nn.Module):
             assert len(wav.shape) == 3
 
         mel = self.transform(wav)
-        chunk_len = 1001  # 10 secnods, consistent with the length of positional embedding
+        chunk_len = 1000  # 10 secnods, consistent with the length of positional embedding
         output = []
 
         total_len = mel.shape[-1]
