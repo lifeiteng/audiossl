@@ -58,8 +58,8 @@ class LinearHead(nn.Module):
         x = x.transpose(1, 2)
         if self.use_norm:
             x = x.unsqueeze(-1)
-            x = self.norm(x)
-        x = x.squeeze(-1).transpose(1, 2)
+            x = self.norm(x).squeeze(-1)
+        x = x.transpose(1, 2)
         # linear layer + get strong predictions
         strong = self.sigmoid(self.linear(x) / temp)
 
